@@ -43,31 +43,26 @@ class RaceLineEditApp:
         self.right_frame = ttk.Frame(self.root, padding="10"); self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     def update_plot(self):
-
         for widget in self.right_frame.winfo_children(): widget.destroy()
-
         fig, ax = plt.subplots(figsize=(8, 8)); self.current_annotation = None
-        
         if self.map_nodes:
             map_x, map_y = zip(*self.map_nodes)
-            # 点のみを描画し、線は描画しない
             ax.scatter(map_x, map_y, c='black', s=2, alpha=0.5, label='map')
-        
-        # 走行ラインはこれまで通り点と線を描画
         if self.df is not None and not self.df.empty:
             data = self.df[['x', 'y', 'speed']].to_numpy()
             self.raceline_scatter = ax.scatter(data[:, 0], data[:, 1], c=data[:, 2], cmap='jet', s=25, label='racing line(point)', picker=5, zorder=10)
-            self.raceline_line, = ax.plot(data[:, 0], data[:, 1], color='cyan', linewidth=1.2, label='racing line (line)', zorder=5)
+            
+            # ### イヤーッ！ これが【ウロボロス・ライン】のジツだ！ ###
+            # プロット用のデータを作成し、点0の座標を末尾に追加する
+            line_plot_data = np.vstack([data[:, :2], data[0, :2]])
+            self.raceline_line, = ax.plot(line_plot_data[:, 0], line_plot_data[:, 1], color='cyan', linewidth=1.2, label='racing line (line)', zorder=5)
 
             cbar = fig.colorbar(self.raceline_scatter, ax=ax, shrink=0.8)
             cbar.set_label('V (m/s)', rotation=270, labelpad=20)
-            
         ax.set_title(""); ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
         ax.grid(True); ax.set_aspect('equal', adjustable='box'); ax.legend()
-        
         self.canvas = FigureCanvasTkAgg(fig, master=self.right_frame)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.right_frame)
-        self.toolbar.update()
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.right_frame); self.toolbar.update()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.mpl_connect('button_press_event', self.on_press)
@@ -77,16 +72,14 @@ class RaceLineEditApp:
   
     def on_scroll(self, event):
         if event.inaxes is None or not hasattr(self, 'toolbar') or self.toolbar.mode: return
-        ax = event.inaxes; cur_xlim = ax.get_xlim(); cur_ylim = ax.get_ylim()
-        xdata, ydata = event.xdata, event.ydata
+        ax = event.inaxes; cur_xlim = ax.get_xlim(); cur_ylim = ax.get_ylim(); xdata, ydata = event.xdata, event.ydata
         base_scale = 1.2
         if event.button == 'up': scale_factor = 1 / base_scale
         elif event.button == 'down': scale_factor = base_scale
         else: return
         new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor; new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
         rel_x = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0]); rel_y = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0])
-        ax.set_xlim([xdata - new_width * (1 - rel_x), xdata + new_width * rel_x])
-        ax.set_ylim([ydata - new_height * (1 - rel_y), ydata + new_height * rel_y])
+        ax.set_xlim([xdata - new_width * (1 - rel_x), xdata + new_width * rel_x]); ax.set_ylim([ydata - new_height * (1 - rel_y), ydata + new_height * rel_y])
         self.canvas.draw_idle()
 
     def on_press(self, event):
@@ -99,13 +92,11 @@ class RaceLineEditApp:
 
     def on_motion(self, event):
         if self.drag_data["index"] is None or event.inaxes is None: return
-        
         if not self.drag_data["is_dragging"]:
             px, py = self.drag_data["press_xy"]
             if (event.x - px)**2 + (event.y - py)**2 > 25:
                 self.drag_data["is_dragging"] = True
                 if self.current_annotation: self.current_annotation.remove(); self.current_annotation = None
-        
         if self.drag_data["is_dragging"]:
             idx = self.drag_data["index"]
             offsets = self.raceline_scatter.get_offsets()
@@ -113,6 +104,9 @@ class RaceLineEditApp:
             self.raceline_scatter.set_offsets(offsets)
             line_data = self.raceline_line.get_xydata()
             line_data[idx] = [event.xdata, event.ydata]
+            # 始点または終点が動いた場合、閉じる線も更新
+            if idx == 0: line_data[-1] = [event.xdata, event.ydata]
+            if idx == len(self.df) -1: line_data[0] = [event.xdata, event.ydata]
             self.raceline_line.set_data(line_data[:, 0], line_data[:, 1])
             self.canvas.draw_idle()
 
@@ -122,15 +116,13 @@ class RaceLineEditApp:
         if self.drag_data["is_dragging"]:
             self.df.loc[idx, 'x'] = event.xdata
             self.df.loc[idx, 'y'] = event.ydata
-            self.populate_table()
-            self.highlight_and_focus_table_row(idx)
+            self.populate_table(); self.highlight_and_focus_table_row(idx)
         else: # クリック操作
             if self.current_annotation: self.current_annotation.remove()
             ax = self.raceline_scatter.axes
             x_coord, y_coord = self.df.iloc[idx]['x'], self.df.iloc[idx]['y']
             self.current_annotation = ax.annotate(f"#{idx}", xy=(x_coord, y_coord), xytext=(15, 15), textcoords='offset points', bbox=dict(boxstyle="round,pad=0.4", fc="yellow", ec="black", lw=1, alpha=0.9), arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1"))
-            self.canvas.draw()
-            self.highlight_and_focus_table_row(idx)
+            self.canvas.draw(); self.highlight_and_focus_table_row(idx)
         self.drag_data = {"index": None, "press_xy": None, "is_dragging": False}
     
     def highlight_and_focus_table_row(self, index_to_find):
@@ -163,17 +155,28 @@ class RaceLineEditApp:
             self.map_nodes = nodes; messagebox.showinfo("成功", f"{len(self.map_nodes)}個の地図ノードを読み込みました。"); self.update_plot()
         except Exception as e: messagebox.showerror("エラー", f"地図ファイルの解析中にエラーが発生しました: {e}")
 
+    # ### イヤーッ！ これが【円環の理】のジツだ！ ###
     def save_csv(self):
+        """保存時に点0のコピーを末尾に加える"""
         if self.df is None: messagebox.showwarning("注意", "保存するデータがありません。"); return
         try:
             file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")], title="名前を付けて保存", initialfile="raceline_modified.csv")
-            if file_path: self.df.to_csv(file_path, index=False); messagebox.showinfo("成功", f"ファイルは正常に保存されました:\n{file_path}")
+            if file_path:
+                # 点0のコピーを末尾に加えた、保存専用のデータフレームを作成する
+                df_to_save = pd.concat([self.df, self.df.iloc[[0]]], ignore_index=True)
+                df_to_save.to_csv(file_path, index=False)
+                messagebox.showinfo("成功", f"ファイルは正常に保存されました:\n{file_path}")
         except Exception as e: messagebox.showerror("エラー", f"ファイルの保存中にエラーが発生しました: {e}")
 
     def load_csv(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")]);
         if not file_path: return
         self.df = pd.read_csv(file_path)
+        # 始点と終点が同じ座標なら、終点を削除して円環を閉じる前の状態に戻す
+        if len(self.df) > 1:
+            last_idx = len(self.df) - 1
+            if all(self.df.iloc[0] == self.df.iloc[last_idx]):
+                self.df = self.df.iloc[:last_idx]
         rename_map = {'# x_m': 'x', 'x_m': 'x', 'y_m': 'y', 'vx_mps': 'speed'}; self.df.rename(columns=rename_map, inplace=True)
         if 'x' not in self.df.columns or 'y' not in self.df.columns or 'speed' not in self.df.columns: messagebox.showerror("エラー", "CSVに 'x', 'y', 'speed' のいずれかの列が含まれていません。"); self.df = None; return
         self.populate_table(); self.update_plot()
