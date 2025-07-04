@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 class RaceLineEditApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("対話型走行ラインエディタ")
+        self.root.title("raceline-visualizer for aaic2025")
         self.root.geometry("1200x800")
 
         # 状態変数の初期化
@@ -52,8 +52,6 @@ class RaceLineEditApp:
             data = self.df[['x', 'y', 'speed']].to_numpy()
             self.raceline_scatter = ax.scatter(data[:, 0], data[:, 1], c=data[:, 2], cmap='jet', s=25, label='racing line(point)', picker=5, zorder=10)
             
-            # ### イヤーッ！ これが【ウロボロス・ライン】のジツだ！ ###
-            # プロット用のデータを作成し、点0の座標を末尾に追加する
             line_plot_data = np.vstack([data[:, :2], data[0, :2]])
             self.raceline_line, = ax.plot(line_plot_data[:, 0], line_plot_data[:, 1], color='cyan', linewidth=1.2, label='racing line (line)', zorder=5)
 
