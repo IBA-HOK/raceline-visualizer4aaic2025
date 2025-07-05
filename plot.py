@@ -291,7 +291,7 @@ class RaceLineEditApp:
                     if tag.get('k') == 'local_x': local_x = float(tag.get('v'))
                     if tag.get('k') == 'local_y': local_y = float(tag.get('v'))
                 if local_x is not None and local_y is not None: nodes.append((local_x, local_y))
-            self.map_nodes = nodes; messagebox.showinfo("成功", f"{len(self.map_nodes)}個の地図ノードを読み込みました。"); self._redraw_plot_data_only()
+            self.map_nodes = nodes; messagebox.showinfo("成功", f"{len(self.map_nodes)}個の地図ノードを読み込みました。"); self.update_plot()
         except Exception as e: messagebox.showerror("エラー", f"地図ファイルの解析中にエラーが発生しました: {e}")
 
     def save_csv(self):
@@ -382,19 +382,19 @@ class RaceLineEditApp:
         if self.df is None or not hasattr(self, 'raceline_scatter') or self.raceline_scatter is None:
             self.update_plot()
             return
-
         data = self.df[['x', 'y', 'speed']].to_numpy()
-        
+        if data.shape[0] > 0:
+            new_min_speed = data[:, 2].min()
+            new_max_speed = data[:, 2].max()
+            self.raceline_scatter.norm.vmin = new_min_speed
+            self.raceline_scatter.norm.vmax = new_max_speed
         self.raceline_scatter.set_offsets(data[:, :2])
-        self.raceline_scatter.set_array(data[:, 2]) # 速度に応じた色も更新
+        self.raceline_scatter.set_array(data[:, 2]) 
         line_plot_data = np.vstack([data[:, :2], data[0, :2]])
         self.raceline_line.set_data(line_plot_data[:, 0], line_plot_data[:, 1])
-
         ax = self.raceline_scatter.axes
         ax.relim()
         ax.autoscale_view()
-        
-        # ハイライトを更新し、変更を画面に反映（再描画）
         self.update_highlight()
 if __name__ == "__main__":
     root = tk.Tk()
