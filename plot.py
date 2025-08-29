@@ -395,49 +395,42 @@ class RaceLineEditApp:
         
         self._save_state_for_undo()
         
-        points = self.df[['x', 'y']].to_numpy()
-        speeds = self.df['speed'].to_numpy()
-        num_total_points = len(self.df)
-        
-        new_segments = []
+        all_new_points = []
         
         # Iterate through pairs of selected points to create segments
         for i in range(len(selected_indices) - 1):
-            idx1 = selected_indices[i]
-            idx2 = selected_indices[i+1]
-            
-            p0_idx = (idx1 - 1 + num_total_points) % num_total_points
-            p1_idx = idx1
-            p2_idx = idx2
-            p3_idx = (idx2 + 1) % num_total_points
-            
-            P0 = points[p0_idx]
-            P1 = points[p1_idx]
-            P2 = points[p2_idx]
-            P3 = points[p3_idx]
-            
-            interpolated_coords = self.catmull_rom_spline(P0, P1, P2, P3, num_inserted_points)
-            
-            speed1 = speeds[p1_idx]
-            speed2 = speeds[p2_idx]
-            interpolated_speeds = np.linspace(speed1, speed2, num_inserted_points + 2)[1:-1]
-            
-            segment_points = []
-            for j in range(num_inserted_points):
-                segment_points.append({'x': interpolated_coords[j][0], 'y': interpolated_coords[j][1], 'speed': interpolated_speeds[j]})
-            
-            new_segments.append((idx1, pd.DataFrame(segment_points)))
+            p1_series = self.df.iloc[selected_indices[i]]
+            p2_series = self.df.iloc[selected_indices[i+1]]
 
-        # Insert the new segments into the original DataFrame
-        # We need to do this in reverse order of index to not mess up the indices
-        for idx, segment_df in reversed(new_segments):
-            df_part1 = self.df.iloc[:idx + 1]
-            df_part2 = self.df.iloc[idx + 1:]
-            self.df = pd.concat([df_part1, segment_df, df_part2]).reset_index(drop=True)
+            # Add the starting point of the segment as a dictionary
+            if i == 0:
+                all_new_points.append(p1_series.to_dict())
+
+            # Interpolate all numeric columns
+            for j in range(1, num_inserted_points + 1):
+                t = j / (num_inserted_points + 1)
+                new_point = {}
+                for col in self.df.columns:
+                    if pd.api.types.is_numeric_dtype(self.df[col]):
+                        new_point[col] = p1_series[col] + (p2_series[col] - p1_series[col]) * t
+                    else:
+                        new_point[col] = p1_series[col]  # For non-numeric columns, copy from the first point
+                all_new_points.append(new_point)
+            
+            # Add the ending point of the segment as a dictionary
+            all_new_points.append(p2_series.to_dict())
+
+        # Create a DataFrame from the new points
+        new_df = pd.DataFrame(all_new_points).drop_duplicates().reset_index(drop=True)
+
+        # Replace the old segment with the new interpolated segment in the original DataFrame
+        df_part1 = self.df.iloc[:selected_indices[0]]
+        df_part2 = self.df.iloc[selected_indices[-1] + 1:]
+
+        self.df = pd.concat([df_part1, new_df, df_part2]).reset_index(drop=True)
 
         self.populate_table()
         self._redraw_plot_data_only()
-
 
     def load_osm_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("OSM/XML files", "*.osm *.txt *.xml")]);
