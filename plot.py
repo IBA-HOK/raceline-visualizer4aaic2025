@@ -64,6 +64,14 @@ class RaceLineEditApp:
         ttk.Button(edit_frame, text="値を更新してプロット再描画", command=self.update_values_from_entry).grid(row=3, column=0, columnspan=2, pady=5)
         ttk.Button(edit_frame, text="選択点の次に点を追加", command=self.add_point).grid(row=4, column=0, columnspan=2, pady=5)
         ttk.Button(edit_frame, text="選択した点を削除", command=self.delete_points).grid(row=5, column=0, columnspan=2, pady=5)
+        
+        interpolation_frame = ttk.LabelFrame(left_frame, text="補完機能", padding="10")
+        interpolation_frame.pack(fill=tk.X, pady=10)
+        ttk.Label(interpolation_frame, text="補間点数:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.interpolation_points_var = tk.StringVar(value="5")
+        ttk.Entry(interpolation_frame, textvariable=self.interpolation_points_var).grid(row=0, column=1, sticky=tk.EW)
+        ttk.Button(interpolation_frame, text="選択範囲を補間", command=self.interpolate_points).grid(row=1, column=0, columnspan=2, pady=5)
+
         self.right_frame = ttk.Frame(self.root, padding="10"); self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 
@@ -328,6 +336,108 @@ class RaceLineEditApp:
             
             self.populate_table()
             self._redraw_plot_data_only()
+
+    def catmull_rom_spline(self, P0, P1, P2, P3, num_points):
+        """Catmull-Romスプライン補間点を計算する"""
+        alpha = 0.5  # Catmull-Romスプラインの種類を定義（0.5でCentripetal）
+        
+        def tj(ti, Pi, Pj):
+            xi, yi = Pi
+            xj, yj = Pj
+            return ((xj - xi)**2 + (yj - yi)**2)**(alpha/2) + ti
+
+        t0 = 0
+        t1 = tj(t0, P0, P1)
+        t2 = tj(t1, P1, P2)
+        t3 = tj(t2, P2, P3)
+
+        t = np.linspace(t1, t2, num_points + 2)[1:-1]
+        
+        # Handle cases where points are identical to avoid division by zero
+        t1_t0 = (t1 - t0) if (t1 - t0) != 0 else 1e-6
+        t2_t1 = (t2 - t1) if (t2 - t1) != 0 else 1e-6
+        t3_t2 = (t3 - t2) if (t3 - t2) != 0 else 1e-6
+        t2_t0 = (t2 - t0) if (t2 - t0) != 0 else 1e-6
+        t3_t1 = (t3 - t1) if (t3 - t1) != 0 else 1e-6
+
+        A1 = ((t1 - t)[:, np.newaxis] / t1_t0) * P0 + ((t - t0)[:, np.newaxis] / t1_t0) * P1
+        A2 = ((t2 - t)[:, np.newaxis] / t2_t1) * P1 + ((t - t1)[:, np.newaxis] / t2_t1) * P2
+        A3 = ((t3 - t)[:, np.newaxis] / t3_t2) * P2 + ((t - t2)[:, np.newaxis] / t3_t2) * P3
+        
+        B1 = ((t2 - t)[:, np.newaxis] / t2_t0) * A1 + ((t - t0)[:, np.newaxis] / t2_t0) * A2
+        B2 = ((t3 - t)[:, np.newaxis] / t3_t1) * A2 + ((t - t1)[:, np.newaxis] / t3_t1) * A3
+
+        C = ((t2 - t)[:, np.newaxis] / t2_t1) * B1 + ((t - t1)[:, np.newaxis] / t2_t1) * B2
+        return C
+
+    def interpolate_points(self):
+        selected_iids = self.tree.selection()
+        if len(selected_iids) < 2:
+            messagebox.showwarning("注意", "補間するには、連続した2つ以上の点を選択してください。")
+            return
+        
+        try:
+            num_inserted_points = int(self.interpolation_points_var.get())
+            if num_inserted_points < 1:
+                messagebox.showerror("エラー", "補間点数は1以上で指定してください。")
+                return
+        except ValueError:
+            messagebox.showerror("エラー", "補間点数には整数を入力してください。")
+            return
+
+        selected_indices = sorted([int(iid) for iid in selected_iids])
+
+        # 選択が連続しているかチェック
+        for i in range(len(selected_indices) - 1):
+            if selected_indices[i+1] - selected_indices[i] != 1:
+                messagebox.showwarning("注意", "補間するには、連続した点を選択してください。")
+                return
+        
+        self._save_state_for_undo()
+        
+        points = self.df[['x', 'y']].to_numpy()
+        speeds = self.df['speed'].to_numpy()
+        num_total_points = len(self.df)
+        
+        new_segments = []
+        
+        # Iterate through pairs of selected points to create segments
+        for i in range(len(selected_indices) - 1):
+            idx1 = selected_indices[i]
+            idx2 = selected_indices[i+1]
+            
+            p0_idx = (idx1 - 1 + num_total_points) % num_total_points
+            p1_idx = idx1
+            p2_idx = idx2
+            p3_idx = (idx2 + 1) % num_total_points
+            
+            P0 = points[p0_idx]
+            P1 = points[p1_idx]
+            P2 = points[p2_idx]
+            P3 = points[p3_idx]
+            
+            interpolated_coords = self.catmull_rom_spline(P0, P1, P2, P3, num_inserted_points)
+            
+            speed1 = speeds[p1_idx]
+            speed2 = speeds[p2_idx]
+            interpolated_speeds = np.linspace(speed1, speed2, num_inserted_points + 2)[1:-1]
+            
+            segment_points = []
+            for j in range(num_inserted_points):
+                segment_points.append({'x': interpolated_coords[j][0], 'y': interpolated_coords[j][1], 'speed': interpolated_speeds[j]})
+            
+            new_segments.append((idx1, pd.DataFrame(segment_points)))
+
+        # Insert the new segments into the original DataFrame
+        # We need to do this in reverse order of index to not mess up the indices
+        for idx, segment_df in reversed(new_segments):
+            df_part1 = self.df.iloc[:idx + 1]
+            df_part2 = self.df.iloc[idx + 1:]
+            self.df = pd.concat([df_part1, segment_df, df_part2]).reset_index(drop=True)
+
+        self.populate_table()
+        self._redraw_plot_data_only()
+
 
     def load_osm_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("OSM/XML files", "*.osm *.txt *.xml")]);
