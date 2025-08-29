@@ -46,6 +46,7 @@ class RaceLineEditApp:
         ttk.Button(file_frame, text="OSM地図を読み込む", command=self.load_osm_map).pack(fill=tk.X, pady=2)
         ttk.Button(file_frame, text="変更をCSVに保存", command=self.save_csv).pack(fill=tk.X, pady=2, padx=5)
         self.tree = ttk.Treeview(left_frame, columns=('Index', 'X', 'Y', 'Speed'), show='headings', selectmode='extended'); self.tree.heading('Index', text='点 #'); self.tree.heading('X', text='X座標'); self.tree.heading('Y', text='Y座標'); self.tree.heading('Speed', text='速度'); self.tree.column('Index', width=50); self.tree.column('X', width=100); self.tree.column('Y', width=100); self.tree.column('Speed', width=80); self.tree.pack(fill=tk.BOTH, expand=True, pady=10); self.tree.bind('<<TreeviewSelect>>', self.on_item_select)
+        self.tree.bind('<Delete>', self.delete_points)
         edit_frame = ttk.LabelFrame(left_frame, text="選択した点を編集", padding="10"); edit_frame.pack(fill=tk.X, pady=10)
         self.x_var, self.y_var, self.speed_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
         
@@ -60,7 +61,9 @@ class RaceLineEditApp:
 
 
         ttk.Label(edit_frame, text="速度:").grid(row=2, column=0, sticky=tk.W, pady=2); ttk.Entry(edit_frame, textvariable=self.speed_var).grid(row=2, column=1, sticky=tk.EW)
-        ttk.Button(edit_frame, text="値を更新してプロット再描画", command=self.update_values_from_entry).grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(edit_frame, text="値を更新してプロット再描画", command=self.update_values_from_entry).grid(row=3, column=0, columnspan=2, pady=5)
+        ttk.Button(edit_frame, text="選択点の次に点を追加", command=self.add_point).grid(row=4, column=0, columnspan=2, pady=5)
+        ttk.Button(edit_frame, text="選択した点を削除", command=self.delete_points).grid(row=5, column=0, columnspan=2, pady=5)
         self.right_frame = ttk.Frame(self.root, padding="10"); self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 
@@ -279,6 +282,52 @@ class RaceLineEditApp:
             self.tree.selection_set(selected_iids) 
         except ValueError: messagebox.showerror("エラー", "速度には数値を入力してください。")
         except Exception as e: messagebox.showerror("エラー", f"予期せぬエラーが発生しました: {e}")
+
+    def add_point(self):
+        selected_iids = self.tree.selection()
+        if not selected_iids:
+            messagebox.showwarning("注意", "点を追加したい場所の、直前の点を選択してください。")
+            return
+
+        self._save_state_for_undo()
+        
+        selected_indices = sorted([int(iid) for iid in selected_iids], reverse=True)
+
+        for idx in selected_indices:
+            p1 = self.df.iloc[idx]
+            
+            next_idx = (idx + 1) % len(self.df)
+            p2 = self.df.iloc[next_idx]
+
+            new_x = (p1['x'] + p2['x']) / 2
+            new_y = (p1['y'] + p2['y']) / 2
+            new_speed = (p1['speed'] + p2['speed']) / 2
+            
+            new_point_df = pd.DataFrame([{'x': new_x, 'y': new_y, 'speed': new_speed}])
+
+            df_part1 = self.df.iloc[:idx + 1]
+            df_part2 = self.df.iloc[idx + 1:]
+            self.df = pd.concat([df_part1, new_point_df, df_part2]).reset_index(drop=True)
+
+        self.populate_table()
+        self._redraw_plot_data_only()
+
+    def delete_points(self, event=None):
+        selected_iids = self.tree.selection()
+        if not selected_iids:
+            messagebox.showwarning("注意", "削除したい点をテーブルで選択してください。")
+            return
+
+        if messagebox.askyesno("確認", f"{len(selected_iids)}個の点を選択しています。本当に削除しますか？"):
+            self._save_state_for_undo()
+            
+            indices_to_delete = sorted([int(iid) for iid in selected_iids], reverse=True)
+            
+            self.df.drop(indices_to_delete, inplace=True)
+            self.df.reset_index(drop=True, inplace=True)
+            
+            self.populate_table()
+            self._redraw_plot_data_only()
 
     def load_osm_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("OSM/XML files", "*.osm *.txt *.xml")]);
