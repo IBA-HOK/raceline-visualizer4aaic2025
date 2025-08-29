@@ -13,7 +13,11 @@ class RaceLineEditApp:
         self.root.geometry("1200x800")
 
         # 状態変数の初期化
-        self.df = None; self.map_nodes = None; self.selected_item = None
+        self.df = None
+        self.map_nodes = None
+        self.left_ways = []
+        self.right_ways = []
+        self.selected_item = None
         self.raceline_scatter = None; self.raceline_line = None
         self.highlight_scatter = None
         self.current_annotation = None
@@ -81,6 +85,13 @@ class RaceLineEditApp:
         if self.map_nodes:
             map_x, map_y = zip(*self.map_nodes)
             ax.scatter(map_x, map_y, c='black', s=2, alpha=0.5, label='map')
+        if self.left_ways or self.right_ways:
+            for way in self.left_ways:
+                x, y = zip(*way)
+                ax.plot(x, y, color='black', linewidth=1)
+            for way in self.right_ways:
+                x, y = zip(*way)
+                ax.plot(x, y, color='black', linewidth=1)
         if self.df is not None and not self.df.empty:
             data = self.df[['x', 'y', 'speed']].to_numpy()
             self.raceline_scatter = ax.scatter(data[:, 0], data[:, 1], c=data[:, 2], cmap='jet', s=25, label='racing line(point)', picker=5, zorder=10)
@@ -435,18 +446,47 @@ class RaceLineEditApp:
         self._redraw_plot_data_only()
 
     def load_osm_map(self):
-        file_path = filedialog.askopenfilename(filetypes=[("OSM/XML files", "*.osm *.txt *.xml")]);
+        file_path = filedialog.askopenfilename(filetypes=[("OSM/XML files", "*.osm *.txt *.xml")])
         if not file_path: return
         try:
-            tree = ET.parse(file_path); root = tree.getroot(); nodes = []
+            tree = ET.parse(file_path)
+            root = tree.getroot()
+            
+            nodes = {}
             for node in root.findall('node'):
+                node_id = node.get('id')
                 local_x, local_y = None, None
                 for tag in node.findall('tag'):
                     if tag.get('k') == 'local_x': local_x = float(tag.get('v'))
                     if tag.get('k') == 'local_y': local_y = float(tag.get('v'))
-                if local_x is not None and local_y is not None: nodes.append((local_x, local_y))
-            self.map_nodes = nodes; messagebox.showinfo("成功", f"{len(self.map_nodes)}個の地図ノードを読み込みました。"); self.update_plot()
-        except Exception as e: messagebox.showerror("エラー", f"地図ファイルの解析中にエラーが発生しました: {e}")
+                if local_x is not None and local_y is not None:
+                    nodes[node_id] = (local_x, local_y)
+            
+            ways = {}
+            for way in root.findall('way'):
+                way_id = way.get('id')
+                node_refs = [nd.get('ref') for nd in way.findall('nd')]
+                ways[way_id] = node_refs
+
+            self.left_ways, self.right_ways = [], []
+            for relation in root.findall('relation'):
+                is_lanelet = any(tag.get('k') == 'type' and tag.get('v') == 'lanelet' for tag in relation.findall('tag'))
+                if is_lanelet:
+                    left_ref, right_ref = None, None
+                    for member in relation.findall('member'):
+                        if member.get('role') == 'left': left_ref = member.get('ref')
+                        if member.get('role') == 'right': right_ref = member.get('ref')
+                    
+                    if left_ref and left_ref in ways:
+                        self.left_ways.append([nodes[ref] for ref in ways[left_ref] if ref in nodes])
+                    if right_ref and right_ref in ways:
+                        self.right_ways.append([nodes[ref] for ref in ways[right_ref] if ref in nodes])
+
+            self.map_nodes = list(nodes.values())
+            messagebox.showinfo("成功", f"{len(self.map_nodes)}個の地図ノードと{len(self.left_ways) + len(self.right_ways)}本の境界線を読み込みました。")
+            self.update_plot()
+        except Exception as e:
+            messagebox.showerror("エラー", f"地図ファイルの解析中にエラーが発生しました: {e}")
 
     def save_csv(self):
         if self.df is None: messagebox.showwarning("注意", "保存するデータがありません。"); return
