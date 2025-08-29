@@ -303,15 +303,17 @@ class RaceLineEditApp:
 
         for idx in selected_indices:
             p1 = self.df.iloc[idx]
-            
             next_idx = (idx + 1) % len(self.df)
             p2 = self.df.iloc[next_idx]
 
-            new_x = (p1['x'] + p2['x']) / 2
-            new_y = (p1['y'] + p2['y']) / 2
-            new_speed = (p1['speed'] + p2['speed']) / 2
+            new_point_data = {}
+            for col in self.df.columns:
+                if pd.api.types.is_numeric_dtype(self.df[col]):
+                    new_point_data[col] = (p1[col] + p2[col]) / 2
+                else:
+                    new_point_data[col] = p1[col]  # For non-numeric columns, copy from the first point
             
-            new_point_df = pd.DataFrame([{'x': new_x, 'y': new_y, 'speed': new_speed}])
+            new_point_df = pd.DataFrame([new_point_data])
 
             df_part1 = self.df.iloc[:idx + 1]
             df_part2 = self.df.iloc[idx + 1:]
